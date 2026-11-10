@@ -112,6 +112,8 @@ _TERMINAL_ENV_ROWS = {
     "ssh": (("SSH Host:", "TERMINAL_SSH_HOST", "(not set)", True), ("SSH User:", "TERMINAL_SSH_USER", "(not set)", True)),
     "docker": (("Docker Image:", "TERMINAL_DOCKER_IMAGE", DEFAULT_SANDBOX_IMAGE, False),),
     "daytona": (("Daytona Image:", "TERMINAL_DAYTONA_IMAGE", DEFAULT_SANDBOX_IMAGE, False),),
+    "restricted": (("Restricted root:", "TERMINAL_RESTRICTED_ROOT", "(not set — terminal.cwd)", True),
+                   ("Env allowlist:", "TERMINAL_RESTRICTED_ENV_ALLOWLIST", "(built-in defaults)", True)),
 }
 
 # Gateway manager label when the runtime snapshot is unavailable, keyed by platform.

@@ -272,6 +272,17 @@ def _check_vercel_backend(issues: list[str]) -> None:
                if persistent else "Vercel persistence: ephemeral filesystem")
 
 
+def _check_restricted_backend(issues: list[str]) -> None:
+    root = os.getenv("TERMINAL_RESTRICTED_ROOT", "").strip()
+    if not root:
+        check_info("Restricted root not set (falls back to terminal.cwd)")
+        return
+    resolved = os.path.realpath(os.path.expanduser(root))
+    _require(os.path.isdir(resolved), ("Restricted root", f"({resolved})"),
+             ("Restricted root missing", f"({resolved})"),
+             "Set terminal.restricted_root to an existing directory.", issues)
+
+
 def _check_plugin_backend(terminal_env: str, issues: list[str]) -> None:
     try:
         from hermes_cli.plugins import discover_plugins
@@ -287,7 +298,8 @@ def _check_plugin_backend(terminal_env: str, issues: list[str]) -> None:
         _require(ok, (label, detail), (label, detail), detail.strip("()"), issues)
 
 
-_BACKEND_CHECKS = {"ssh": _check_ssh_backend, "daytona": _check_daytona_backend, "vercel_sandbox": _check_vercel_backend}
+_BACKEND_CHECKS = {"ssh": _check_ssh_backend, "daytona": _check_daytona_backend,
+                   "vercel_sandbox": _check_vercel_backend, "restricted": _check_restricted_backend}
 
 
 @doctor_check()

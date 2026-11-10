@@ -48,6 +48,9 @@ _IS_WINDOWS = os.name == "nt"
 # keeps URL-ish and arithmetic text ("http://x", "1/2", "s/a/b/g") out of the
 # guard while still catching "2>/etc/passwd" and "--out=/etc/passwd".
 _PATH_START_RE = re.compile(r"(?<![A-Za-z0-9_:./\\])(?:[A-Za-z]:[\\/]|/|~/|\.{1,2}/)")
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(.*)$", re.DOTALL)
+# Bash device paths are not host filesystem paths; redirecting to them is routine.
+_DEVICE_PATHS = frozenset({"/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr", "/dev/tty"})
 
 
 def _normalise_allowlist(names: Iterable[str] | str) -> tuple[str, ...]:
@@ -98,24 +101,58 @@ def _path_candidates(command: str) -> list[str]:
     return candidates
 
 
+def _resolve_candidate(text: str, cwd: str, root: str) -> str:
+    """Normalise one path fragment to a native absolute path for the guard."""
+    if text == "~" or text.startswith("~/"):
+        text = root + text[1:]
+    elif _IS_WINDOWS and text.startswith("/"):
+        # Git Bash spells native paths /d/Users/...; realpath would otherwise
+        # read that as D:\d\Users\... and reject a perfectly in-root path.
+        from tools.environments.local import _msys_to_windows_path
+        text = _msys_to_windows_path(text)
+    return text if os.path.isabs(text) else os.path.join(cwd, text)
+
+
 def find_path_violation(command: str, cwd: str, root: str) -> str | None:
     """Reject command text that names a path outside *root*; else return None.
 
     Paths are resolved against *cwd* and through symlinks, so ``../`` escapes,
     absolute host paths and links pointing out of the root are all caught. This
-    is a static check: dynamically constructed paths (``$VAR``, ``$(...)``) are
-    not evaluated here — the cwd clamp in ``_update_cwd`` is the second layer.
+    is a static check on literal paths; ``find_dynamic_path_violation`` handles
+    ones the shell would assemble at runtime, and ``_update_cwd`` is the second
+    layer for the cwd the wrapper reports back.
     """
     for text in _path_candidates(command):
         text = text.rstrip("'\"")
-        if text == "~" or text.startswith("~/"):
-            text = root + text[1:]
-        elif text.startswith("~"):
+        if text.startswith("~") and text != "~" and not text.startswith("~/"):
             return f"home expansion {text!r} is not allowed"
-        candidate = text if os.path.isabs(text) else os.path.join(cwd, text)
+        if text in _DEVICE_PATHS:
+            continue
+        candidate = _resolve_candidate(text, cwd, root)
         resolved = os.path.realpath(os.path.normpath(candidate))
         if not _is_within(root, resolved):
             return f"path {text!r} escapes restricted root {root!r}"
+    return None
+
+
+def find_dynamic_path_violation(command: str) -> str | None:
+    """Reject paths the shell would build from variable/command expansion.
+
+    A static check cannot know where ``$DIR/file`` or ``a=..; cat $a/x`` will
+    point once bash expands them, so refuse those path-shaped cases outright.
+    Plain variable use (``echo $HOME``) is unaffected.
+    """
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        tokens = command.split()
+    for token in tokens:
+        raw = token.rstrip(";")
+        if ("/" in raw or ".." in raw) and ("$" in raw or "`" in raw):
+            return f"dynamically expanded path {raw!r} is not allowed"
+        if (match := _ASSIGN_RE.match(raw)) and (
+                ".." in match.group(1) or match.group(1).startswith(("/", "~"))):
+            return f"path-like shell assignment {raw!r} is not allowed"
     return None
 
 
@@ -149,7 +186,15 @@ class RestrictedEnvironment(BaseEnvironment):
         return (Path(self.root) / ".hermes-restricted").as_posix()
 
     def get_temp_dir(self) -> str:
-        """Session artifacts stay inside the root, never in the host /tmp."""
+        """Session artifacts stay inside the root, never in the host temp dir.
+
+        Callers such as ``_env_temp_dir`` only accept POSIX-looking paths, so
+        on Windows report the Git Bash spelling while ``_temp_dir`` keeps the
+        native spelling for Python-side mkdir/cleanup.
+        """
+        if _IS_WINDOWS:
+            from tools.environments.local import _windows_to_msys_path
+            return _windows_to_msys_path(self._temp_dir)
         return self._temp_dir
 
     def init_session(self):
@@ -161,6 +206,11 @@ class RestrictedEnvironment(BaseEnvironment):
         return BaseEnvironment._quote_cwd_for_cd(_windows_to_msys_path(cwd))
 
     def _clamp_cwd(self, cwd: str) -> str:
+        # Generic callers (execute_code's python3 probe, remote file ship/cleanup
+        # in code_execution_rpc.py) pass "/" as an "any valid cwd" sentinel. For
+        # a confined shell that means the root, not a request to escape it.
+        if cwd == "/":
+            cwd = ""
         resolved = os.path.realpath(os.path.abspath(os.path.expanduser(cwd or self.root)))
         if not _is_within(self.root, resolved):
             raise ValueError(f"cwd {resolved!r} escapes restricted root {self.root!r}")
@@ -173,7 +223,7 @@ class RestrictedEnvironment(BaseEnvironment):
         # These are set by the backend, not passed through from the host: keeping
         # ~ / temp writes / $PWD inside the root is what makes the cwd guard hold.
         cleaned["HOME"] = self.root
-        cleaned["TMPDIR"] = self._temp_dir
+        cleaned["TMPDIR"] = self.get_temp_dir()
         cleaned["PWD"] = self.root
         cleaned["TERM"] = cleaned.get("TERM", "dumb")
         return cleaned
@@ -184,7 +234,8 @@ class RestrictedEnvironment(BaseEnvironment):
             target_cwd = self._clamp_cwd(cwd or self.cwd)
         except ValueError as exc:
             return {"output": f"[restricted] {exc}", "returncode": 126}
-        violation = find_path_violation(command, target_cwd, self.root)
+        violation = (find_dynamic_path_violation(command)
+                     or find_path_violation(command, target_cwd, self.root))
         if violation:
             return {"output": f"[restricted] {violation}", "returncode": 126}
         return super().execute(command, cwd=target_cwd, **kwargs)
@@ -217,7 +268,7 @@ class RestrictedEnvironment(BaseEnvironment):
             args, text=True, env=self._clean_env(), encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
-            # Own session so a timeout can kill the whole tree, not just bash.
+            # detached-spawn: ok — awaited under a deadline; _kill_process kills the whole group.
             start_new_session=True, cwd=self._clamp_cwd(self.cwd),
             **({"creationflags": windows_hide_flags()} if _IS_WINDOWS else {}))
         if stdin_data is not None:

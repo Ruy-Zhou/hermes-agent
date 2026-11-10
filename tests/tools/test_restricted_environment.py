@@ -7,13 +7,16 @@ selected like any other backend.
 """
 
 import os
+import shlex
 import shutil
+from pathlib import Path
 
 import pytest
 
 from tools.environments import restricted as r
 from tools.environments.restricted import (RestrictedEnvironment, _is_within,
-                                           _normalise_allowlist, find_path_violation)
+                                           _normalise_allowlist, find_dynamic_path_violation,
+                                           find_path_violation)
 
 
 def _bash_binary():
@@ -219,3 +222,103 @@ def test_env_config_exposes_restricted_keys(monkeypatch, tmp_path):
     assert config["restricted_root"] == str(tmp_path)
     assert config["restricted_env_allowlist"] == ["PATH", "LANG"]
     assert terminal_tool._backend_default_cwd("restricted") != "/root"
+
+
+# --- Dynamically assembled paths --------------------------------------------
+
+@pytest.mark.parametrize("command", ["a=..; cat $a/outside.txt", 'DIR=..; cat "$DIR/outside.txt"',
+                                     "cat $DIR/outside.txt", 'cat "$(echo ..)/outside.txt"'])
+def test_dynamic_path_expansion_is_refused(sandbox, command):
+    env, _, _ = sandbox
+    result = env.execute(command)
+    assert result["returncode"] == 126, result
+    assert "[restricted]" in result["output"]
+    assert "outside-marker" not in result["output"]
+
+
+def test_dynamic_path_guard_ignores_plain_variable_use():
+    assert find_dynamic_path_violation("echo $HOME") is None
+    assert find_dynamic_path_violation("echo $PATH && pwd") is None
+
+
+@needs_bash
+def test_plain_variable_expansion_still_runs(sandbox):
+    env, _, _ = sandbox
+    assert env.execute("echo $HOME")["returncode"] == 0
+
+
+# --- Generic remote-style callers (execute_code / file RPC) ------------------
+
+@needs_bash
+def test_cwd_slash_sentinel_runs_inside_root(sandbox):
+    """execute_code probes python3 with cwd="/"; that must not look like an escape."""
+    env, _, _ = sandbox
+    result = env.execute("command -v bash >/dev/null 2>&1 && echo OK", cwd="/")
+    assert result["returncode"] == 0, result
+    assert "OK" in result["output"]
+    assert _is_within(env.root, os.path.realpath(env._clamp_cwd("/")))
+
+
+@needs_bash
+def test_remote_rpc_sandbox_dir_commands_are_accepted(sandbox):
+    from tools.code_execution_rpc import _private_dirs_cmd
+    env, _, _ = sandbox
+    sandbox_dir = f"{env.get_temp_dir()}/hermes_exec_check"
+    result = env.execute(_private_dirs_cmd(sandbox_dir, f"{sandbox_dir}/rpc"), cwd="/")
+    assert result["returncode"] == 0, result
+    cleanup = env.execute(f"rm -rf {shlex.quote(sandbox_dir)}", cwd="/")
+    assert cleanup["returncode"] == 0, cleanup
+
+
+def test_temp_dir_is_posix_shaped_and_resolves_inside_root(sandbox):
+    from tools.environments.local import _msys_to_windows_path
+    env, _, _ = sandbox
+    temp = env.get_temp_dir()
+    assert temp.startswith("/")  # _env_temp_dir rejects native Windows drive paths
+    native = _msys_to_windows_path(temp) if r._IS_WINDOWS else temp
+    assert _is_within(env.root, os.path.realpath(native))
+
+
+@pytest.mark.skipif(not r._IS_WINDOWS, reason="Git Bash MSYS spellings are Windows-only")
+def test_path_guard_accepts_msys_spelling_of_root(sandbox):
+    from tools.environments.local import _windows_to_msys_path
+    env, root, _ = sandbox
+    msys = _windows_to_msys_path(str(root))
+    assert find_path_violation(f"cat {msys}/inside.txt", env.root, env.root) is None
+
+
+# --- Dashboard / CLI / desktop registration ---------------------------------
+
+def test_dashboard_schema_and_defaults_register_restricted():
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
+    from hermes_cli.web_server_config import CONFIG_SCHEMA
+    assert "restricted" in CONFIG_SCHEMA["terminal.backend"]["options"]
+    assert DEFAULT_CONFIG["terminal"]["restricted_root"] == ""
+    assert DEFAULT_CONFIG["terminal"]["restricted_env_allowlist"] == []
+
+
+def test_status_config_show_and_doctor_register_restricted(monkeypatch, tmp_path, capsys):
+    from hermes_cli import config_show, doctor_tools, status
+    assert "restricted" in status._TERMINAL_ENV_ROWS
+    assert "restricted" in doctor_tools._BACKEND_CHECKS
+    config_show._show_terminal_section({"terminal": {"backend": "restricted",
+                                                     "restricted_root": str(tmp_path),
+                                                     "restricted_env_allowlist": ["PATH"]}})
+    printed = capsys.readouterr().out
+    assert "Root:" in printed and str(tmp_path) in printed
+    monkeypatch.setenv("TERMINAL_RESTRICTED_ROOT", str(tmp_path))
+    issues = []
+    doctor_tools._check_restricted_backend(issues)
+    assert issues == []
+    monkeypatch.setenv("TERMINAL_RESTRICTED_ROOT", str(tmp_path / "missing"))
+    issues = []
+    doctor_tools._check_restricted_backend(issues)
+    assert issues
+
+
+def test_desktop_backend_lists_include_restricted():
+    desktop = Path(__file__).resolve().parents[2] / "apps/desktop/src"
+    picker = (desktop / "app/settings/constants.ts").read_text(encoding="utf-8")
+    policy = (desktop / "lib/attachment-upload-policy.ts").read_text(encoding="utf-8")
+    assert "'restricted'" in picker.split("'terminal.backend':")[1].splitlines()[0]
+    assert "'restricted'" in policy

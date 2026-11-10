@@ -283,6 +283,7 @@ DEFAULT_CONFIG = {
 
     "terminal": {
         "backend": "local",
+        "restricted_root": "", "restricted_env_allowlist": [],  # empty -> terminal.cwd / built-in safe names
         "modal_mode": "auto",
         # Remote-backend connection-class failures (SSH host unreachable, Docker daemon down):
         # "warn" = structured degraded tool result with reason + retry hint; "fail" = raise error +
@@ -322,8 +323,7 @@ DEFAULT_CONFIG = {
         # Extra files sourced in the login shell when building the per-session env snapshot — for
         # nvm/pyenv/asdf/PATH entries registered by files a bash login shell skips (~/.bashrc,
         # ~/.zshrc, ~/.zprofile). Supports ~ and ${VAR}; missing files skipped. When empty and the
-        # shell is bash, ~/.profile, ~/.bash_profile, ~/.bashrc are auto-sourced in that order (see
-        # auto_source_bashrc).
+        # Login bash auto-sources ~/.profile, ~/.bash_profile, ~/.bashrc (see auto_source_bashrc).
         "shell_init_files": [],
         # Source ~/.profile, ~/.bash_profile, ~/.bashrc in the snapshot login shell to capture PATH
         # additions, functions, and aliases that `bash -l -c` misses (bash skips bashrc when

@@ -82,7 +82,7 @@ _SCHEMA_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "terminal.backend": _select(
         "Terminal execution backend",
-        "local", "docker", "ssh", "modal", "daytona", "vercel_sandbox",
+        "local", "docker", "ssh", "modal", "daytona", "vercel_sandbox", "restricted",
     ),
     # sync with _SUPPORTED_VERCEL_RUNTIMES in terminal_tool.py
     "terminal.vercel_image": {

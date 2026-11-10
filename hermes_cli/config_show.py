@@ -103,7 +103,10 @@ def _show_terminal_section(config: dict[str, Any]) -> None:
         ],
         'ssh': lambda: [
             f"  SSH host:     {_cfg.get_env_value('TERMINAL_SSH_HOST') or '(not set)'}",
-            f"  SSH user:     {_cfg.get_env_value('TERMINAL_SSH_USER') or '(not set)'}"]}
+            f"  SSH user:     {_cfg.get_env_value('TERMINAL_SSH_USER') or '(not set)'}"],
+        'restricted': lambda: [
+            f"  Root:          {terminal.get('restricted_root') or '(terminal.cwd)'}",
+            f"  Env allowlist: {terminal.get('restricted_env_allowlist') or '(built-in defaults)'}"]}
     for line in backend_lines.get(terminal.get('backend'), list)():
         print(line)
 
