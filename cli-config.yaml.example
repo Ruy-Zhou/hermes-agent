@@ -548,6 +548,19 @@ terminal:
 #   daytona_image: "nousresearch/hermes-sandbox:desktop"
 #   container_disk: 10240          # Daytona max is 10GB per sandbox
 
+# -----------------------------------------------------------------------------
+# OPTION 7: Restricted local subprocess execution
+# Commands run as local subprocesses confined to one directory, with a freshly
+# built allowlisted environment and a hard timeout. Not a kernel sandbox: no
+# chroot, namespaces or seccomp; the path guard inspects command text and clamps
+# the cwd the shell reports back.
+# -----------------------------------------------------------------------------
+# terminal:
+#   backend: "restricted"
+#   restricted_root: "/path/to/allowed/dir"  # Empty = fall back to terminal.cwd
+#   restricted_env_allowlist: ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM"]
+#   timeout: 180
+
 #
 # --- Container resource limits (docker, modal, daytona, container plugin backends -- ignored for local/ssh) ---
 # These settings apply to all container backends. They control the resources

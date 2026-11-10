@@ -340,7 +340,9 @@ _TERMINAL_BACKENDS: list[dict[str, str]] = [
          "Run commands in an isolated Docker or Podman container with a persistent workspace."),
         ("modal", "Modal", "Run commands in a Modal cloud sandbox."),
         ("daytona", "Daytona", "Run commands in a Daytona cloud sandbox."),
-        ("ssh", "SSH", "Run commands on a remote host over SSH."))]
+        ("ssh", "SSH", "Run commands on a remote host over SSH."),
+        ("restricted", "Restricted",
+         "Run commands as local subprocesses confined to one directory with a clean environment and a hard timeout."))]
 
 
 def _plugin_terminal_backend_rows() -> list[dict[str, str]]:

@@ -129,6 +129,16 @@ def _setup_backend_local(config: dict) -> None:
     config["terminal"].setdefault("cwd", str(Path.home()))
 
 
+def _setup_backend_restricted(config: dict) -> None:
+    _setup.print_success("Terminal backend: Restricted")
+    _setup.print_info("Commands run as local subprocesses in one directory, with a clean environment.")
+    current = _setup.cfg_get(config, "terminal", "restricted_root", default="")
+    root = _setup.prompt("  Allowed root directory", current or os.getcwd()).strip()
+    if root and not os.path.isdir(root):
+        _setup.print_warning(f"{root} does not exist; create it before using this backend.")
+    config.setdefault("terminal", {})["restricted_root"] = root
+
+
 def _setup_backend_docker(config: dict) -> None:
     _setup.print_success("Terminal backend: Docker / Podman")
     docker_exe = find_docker()
@@ -259,10 +269,12 @@ _BUILTIN_TERMINAL_BACKENDS = [
     ("docker", "Docker/Podman - isolated container with configurable resources"),
     ("modal", "Modal - serverless cloud sandbox"), ("ssh", "SSH - run on a remote machine"),
     ("daytona", "Daytona - persistent cloud development environment"),
-    ("vercel_sandbox", "Vercel Sandbox - cloud microVM with snapshot filesystem persistence")]
+    ("vercel_sandbox", "Vercel Sandbox - cloud microVM with snapshot filesystem persistence"),
+    ("restricted", "Restricted - local subprocess, one directory, clean env, hard timeout")]
 _TERMINAL_BACKEND_SETUP = {
     "local": _setup_backend_local, "docker": _setup_backend_docker, "modal": _setup_backend_modal,
-    "daytona": _setup_backend_daytona, "vercel_sandbox": _setup_backend_vercel, "ssh": _setup_backend_ssh}
+    "daytona": _setup_backend_daytona, "vercel_sandbox": _setup_backend_vercel, "ssh": _setup_backend_ssh,
+    "restricted": _setup_backend_restricted}
 # Backend -> env var mirrored from config after setup (config.yaml is the source of truth, but
 # terminal_tool reads these from .env).
 _BACKEND_ENV_MIRROR = {"modal": ("TERMINAL_MODAL_MODE", "modal_mode", "auto"),

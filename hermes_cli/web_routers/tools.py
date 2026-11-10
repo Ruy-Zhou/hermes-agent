@@ -115,12 +115,26 @@ def _probe_daytona_backend(_cfg) -> tuple:
     return ("needs_setup", "Set DAYTONA_API_KEY to use the Daytona backend.")
 
 
+def _probe_restricted_backend(cfg) -> tuple:
+    """The restricted backend needs only an existing root directory."""
+    import os
+    root = str((cfg or {}).get("restricted_root") or "").strip()
+    if not root:
+        return ("ready", "Uses terminal.cwd as the confined root.")
+    expanded = os.path.abspath(os.path.expanduser(root))
+    if os.path.isdir(expanded):
+        return ("ready", "")
+    return ("needs_setup", f"Restricted root {expanded} does not exist — create it or clear "
+                           "terminal.restricted_root.")
+
+
 _BACKEND_PROBES = {
     "local": lambda _cfg: ("ready", ""),
     "docker": _probe_docker_backend,
     "ssh": _probe_ssh_backend,
     "modal": _probe_modal_backend,
     "daytona": _probe_daytona_backend,
+    "restricted": _probe_restricted_backend,
 }
 
 

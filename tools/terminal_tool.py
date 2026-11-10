@@ -753,7 +753,8 @@ _DEFAULT_CWD_BY_BACKEND = {"ssh": "~", "vercel_sandbox": _VERCEL_SANDBOX_DEFAULT
 
 
 def _backend_default_cwd(env_type: str) -> str:
-    if env_type == "local":
+    if env_type in ("local", "restricted"):
+        # restricted runs on the host, so its root must default to a host path.
         return _safe_getcwd()
     if env_type in _DEFAULT_CWD_BY_BACKEND:
         return _DEFAULT_CWD_BY_BACKEND[env_type]
@@ -864,6 +865,11 @@ def _get_env_config() -> dict[str, Any]:
             "TERMINAL_SSH_PERSISTENT", _tenv("TERMINAL_PERSISTENT_SHELL", "true"),
         ),
         "local_persistent": _tenv_bool("TERMINAL_LOCAL_PERSISTENT", "true"),
+        # Restricted backend: the one directory commands may touch, and the only
+        # host env var NAMES allowed into the child (values still come from the host).
+        "restricted_root": _tenv("TERMINAL_RESTRICTED_ROOT", ""),
+        "restricted_env_allowlist": _parse_env_var(
+            "TERMINAL_RESTRICTED_ENV_ALLOWLIST", "[]", json.loads, "valid JSON list"),
         # Container resources (MB); ignored for local/ssh.
         "container_cpu": container_cpu,
         "container_memory": container_memory,

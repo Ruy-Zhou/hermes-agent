@@ -1166,6 +1166,7 @@
                 "managed_modal",
                 "modal",
                 "other",
+                "restricted",
                 "singularity",
                 "ssh",
                 "vercel_sandbox"
@@ -2195,6 +2196,7 @@
                 "modal",
                 "other",
                 "remote",
+                "restricted",
                 "singularity",
                 "ssh",
                 "vercel_sandbox"
@@ -3248,6 +3250,7 @@
                 "managed_modal",
                 "modal",
                 "other",
+                "restricted",
                 "singularity",
                 "ssh",
                 "vercel_sandbox"

@@ -2021,8 +2021,8 @@ def _bridge_terminal_config_to_env(_terminal_cfg: dict) -> None:
         "docker_persist_across_processes": "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES",
         "docker_shared_container_key": "TERMINAL_DOCKER_SHARED_CONTAINER_KEY",
         "docker_orphan_reaper": "TERMINAL_DOCKER_ORPHAN_REAPER",
-        "sandbox_dir": "TERMINAL_SANDBOX_DIR",
-        "persistent_shell": "TERMINAL_PERSISTENT_SHELL"}
+        "sandbox_dir": "TERMINAL_SANDBOX_DIR", "persistent_shell": "TERMINAL_PERSISTENT_SHELL",
+        "restricted_root": "TERMINAL_RESTRICTED_ROOT", "restricted_env_allowlist": "TERMINAL_RESTRICTED_ENV_ALLOWLIST"}
     for _cfg_key, _env_var in _terminal_env_map.items():
         if _cfg_key not in _terminal_cfg:
             continue

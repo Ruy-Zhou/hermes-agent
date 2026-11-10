@@ -6,6 +6,7 @@ import functools
 import importlib.util
 import inspect
 import logging
+import os
 import subprocess
 from typing import Any, Dict, Optional
 
@@ -13,6 +14,8 @@ from tools.environments.docker import DockerEnvironment as _DockerEnvironment
 from tools.environments.local import LocalEnvironment as _LocalEnvironment
 from tools.environments.managed_modal import ManagedModalEnvironment as _ManagedModalEnvironment
 from tools.environments.modal import ModalEnvironment as _ModalEnvironment
+from tools.environments.restricted import (DEFAULT_RESTRICTED_ENV_ALLOWLIST,
+                                           RestrictedEnvironment as _RestrictedEnvironment)
 from tools.environments.ssh import SSHEnvironment as _SSHEnvironment
 from tools.managed_tool_gateway import is_managed_tool_gateway_ready
 from tools.terminal_tool_config import _get_plugin_env_provider
@@ -49,7 +52,7 @@ def terminal_backend_unavailable_reason() -> Optional[str]:
 
 _VERCEL_SANDBOX_DEFAULT_CWD = "/vercel/sandbox"
 _SUPPORTED_VERCEL_RUNTIMES = ("node24", "node22", "python3.13")
-_BUILTIN_BACKENDS = "local, docker, modal, daytona, vercel_sandbox, ssh"
+_BUILTIN_BACKENDS = "local, docker, modal, daytona, vercel_sandbox, ssh, restricted"
 
 # Config -> kwargs shapers, driven by (out_key, config_key, default) tables. The container table's
 # (key, default) literal is intentionally greppable; tools/terminal_tool.py keeps its own for the AST test.
@@ -84,6 +87,12 @@ def _ssh_config_from_config(config: dict[str, Any]) -> dict:
 def _local_config_from_config(config: dict[str, Any]) -> dict:
     """``local_config`` for :func:`_create_environment` (TERMINAL_LOCAL_PERSISTENT, default on)."""
     return {"persistent": config.get("local_persistent", True)}
+
+
+def _restricted_config_from_config(config: dict[str, Any]) -> dict:
+    """``restricted_config`` for :func:`_create_environment` (root + env allowlist)."""
+    return {"root": config.get("restricted_root", ""),
+            "env_allowlist": config.get("restricted_env_allowlist") or DEFAULT_RESTRICTED_ENV_ALLOWLIST}
 
 
 def _container_config_from_config(config: dict[str, Any]) -> dict:
@@ -210,6 +219,12 @@ def _build_ssh_env(*, cwd, timeout, ssh_config, probe_only=False, **_):
                            persistent=ssh_config.get("persistent", True))
 
 
+def _build_restricted_env(*, cwd, timeout, rc, **_):
+    rc = rc or {}
+    return _RestrictedEnvironment(cwd=cwd, timeout=timeout, root=rc.get("root", ""),
+                                  env_allowlist=rc.get("env_allowlist") or ())
+
+
 def _stamp_sandbox_home(env_obj, provider, cwd) -> None:
     """Record the provider's declared home on this environment: a declared absolute path whatever ``cwd`` the
     environment started in (``terminal.cwd`` may pick another directory), or, for ``~``, the path it resolved
@@ -268,20 +283,22 @@ def _build_plugin_env(*, env_type, image, cwd, timeout, cc, task_id, **_):
 # Built-in backend -> builder. Anything else is looked up in the plugin registry.
 _ENV_BUILDERS = {"local": _build_local_env, "docker": _build_docker_env, "modal": _build_modal_env,
                  "daytona": _build_daytona_env, "vercel_sandbox": _build_vercel_env,
-                 "ssh": _build_ssh_env}
+                 "ssh": _build_ssh_env, "restricted": _build_restricted_env}
 
 
 def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
                         ssh_config: dict | None = None, container_config: dict | None = None,
                         local_config: dict | None = None, task_id: str = "default",
-                        host_cwd: Optional[str] = None, probe_only: bool = False):
+                        host_cwd: Optional[str] = None, probe_only: bool = False,
+                        restricted_config: dict | None = None):
     """Create an execution environment (instance with ``execute()``) for *env_type*. ``image`` is ignored
     for local/ssh/vercel; ``container_config`` carries the container_*/docker_* resource keys; ``host_cwd`` is
     the host dir bound into Docker when cwd mounting is enabled. ``probe_only`` asks ssh for a throwaway
     connection with no remote setup/sync (the prompt-time probe). Unknown types fall through to plugin backends."""
     builder = _ENV_BUILDERS.get(env_type)
     kwargs = dict(image=image, cwd=cwd, timeout=timeout, cc=container_config or {}, task_id=task_id,
-                  ssh_config=ssh_config, local_config=local_config, host_cwd=host_cwd, probe_only=probe_only)
+                  ssh_config=ssh_config, local_config=local_config, host_cwd=host_cwd, probe_only=probe_only,
+                  rc=restricted_config or {})
     if builder is not None:
         env = builder(**kwargs)
     else:
@@ -341,6 +358,18 @@ def _ssh_pre(config: dict[str, Any]) -> bool:
                    "run `hermes setup terminal` to enter them or pick the 'local' backend")
 
 
+def _restricted_pre(config: dict[str, Any]) -> bool:
+    """An unset root is fine (the builder falls back to terminal.cwd); a wrong one is not."""
+    root = str(config.get("restricted_root") or "").strip()
+    if not root:
+        return True
+    expanded = os.path.abspath(os.path.expanduser(root))
+    if not os.path.isdir(expanded):
+        return _reject(f"the 'restricted' backend root {expanded!r} is not an existing directory. "
+                       "Set terminal.restricted_root to a directory on this machine.")
+    return True
+
+
 def _daytona_post(config: dict[str, Any]) -> bool:
     from daytona import Daytona
     from agent.secret_scope import get_secret
@@ -349,6 +378,7 @@ def _daytona_post(config: dict[str, Any]) -> bool:
 
 _BACKEND_SPECS: dict[str, dict[str, Any]] = {
     "local": {},
+    "restricted": {"pre": _restricted_pre},
     "docker": {"binary": (lambda: importlib.import_module("tools.environments.docker").find_docker(), "version",
                           "Docker is not installed — no docker executable in PATH or the usual install locations")},
     "ssh": {"pre": _ssh_pre},
